@@ -9,8 +9,8 @@ using namespace std;
 typedef vector<vector<float>> matrix;
 
 int main(int argc, char** argv) {
-  int nx = 500;
-  int ny = 500;
+  int nx = 41;
+  int ny = 41;
   int nt = 500;
   int nit = 50;
   double dx = 2. / (nx - 1);
@@ -70,13 +70,19 @@ int main(int argc, char** argv) {
         }
       }
       // 境界条件
-      for (int j=0; j<ny; j++) {
+      for (int j = begin; j < end; j++) {
         p[j][nx-1] = p[j][nx-2]; // p[:, -1] = p[:, -2]
         p[j][0]    = p[j][1];    // p[:, 0] = p[:, 1]
       }
-      for (int i=0; i<nx; i++) {
-        p[0][i]    = p[1][i];    // p[0, :] = p[1, :]
-        p[ny-1][i] = 0.0;        // p[-1, :] = 0
+      if (begin == 0) {
+        for (int i = 0; i < nx; i++) {
+          p[0][i] = p[1][i];    // p[0, :] = p[1, :]
+        }
+      }
+      if (end == ny) {
+        for (int i = 0; i < nx; i++) {
+          p[ny-1][i] = 0.0;     // p[-1, :] = 0
+        }
       }
     }
     for (int j=0; j<ny; j++) {
@@ -151,18 +157,64 @@ int main(int argc, char** argv) {
       v[ny-1][i] = 0.0; // v[-1, :] = 0
     }
     if (n % 10 == 0) {
-      for (int j=0; j<ny; j++)
-        for (int i=0; i<nx; i++)
-          ufile << u[j][i] << " ";
-      ufile << "\n";
-      for (int j=0; j<ny; j++)
-        for (int i=0; i<nx; i++)
-          vfile << v[j][i] << " ";
-      vfile << "\n";
-      for (int j=0; j<ny; j++)
-        for (int i=0; i<nx; i++)
-          pfile << p[j][i] << " ";
-      pfile << "\n";
+      int local_rows = end - begin;
+      std::vector<float> u_local(local_rows * nx);
+      std::vector<float> v_local(local_rows * nx);
+      std::vector<float> p_local(local_rows * nx);
+      for (int j = begin; j < end; j++)
+        for (int i = 0; i < nx; i++) {
+          u_local[(j - begin) * nx + i] = u[j][i];
+          v_local[(j - begin) * nx + i] = v[j][i];
+          p_local[(j - begin) * nx + i] = p[j][i];
+        }
+
+      std::vector<float> u_all, v_all, p_all;
+      if (rank == 0) {
+        u_all.resize(ny * nx);
+        v_all.resize(ny * nx);
+        p_all.resize(ny * nx);
+      }
+      std::vector<int> recvcounts, displs;
+      if (rank == 0) {
+        recvcounts.resize(size);
+        displs.resize(size);
+        for (int r = 0; r < size; r++) {
+          int b = r * ny / size;
+          int e = (r + 1) * ny / size;
+          recvcounts[r] = (e - b) * nx;
+          displs[r] = b * nx;
+        }
+      }
+      MPI_Gatherv(u_local.data(), local_rows * nx, MPI_FLOAT,
+                  rank == 0 ? u_all.data() : nullptr,
+                  rank == 0 ? recvcounts.data() : nullptr,
+                  rank == 0 ? displs.data() : nullptr,
+                  MPI_FLOAT, 0, MPI_COMM_WORLD);
+      MPI_Gatherv(v_local.data(), local_rows * nx, MPI_FLOAT,
+                  rank == 0 ? v_all.data() : nullptr,
+                  rank == 0 ? recvcounts.data() : nullptr,
+                  rank == 0 ? displs.data() : nullptr,
+                  MPI_FLOAT, 0, MPI_COMM_WORLD);
+      MPI_Gatherv(p_local.data(), local_rows * nx, MPI_FLOAT,
+                  rank == 0 ? p_all.data() : nullptr, 
+                  rank == 0 ? recvcounts.data() : nullptr,
+                  rank == 0 ? displs.data() : nullptr,
+                  MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+      if (rank == 0) {
+        for (int j = 0; j < ny; j++)
+          for (int i = 0; i < nx; i++)
+            ufile << u_all[j * nx + i] << " ";
+        ufile << "\n";
+        for (int j = 0; j < ny; j++)
+          for (int i = 0; i < nx; i++)
+            vfile << v_all[j * nx + i] << " ";
+        vfile << "\n";
+        for (int j = 0; j < ny; j++)
+          for (int i = 0; i < nx; i++)
+            pfile << p_all[j * nx + i] << " ";
+        pfile << "\n";
+      }
     }
   }
   ufile.close();
