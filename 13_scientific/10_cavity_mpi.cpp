@@ -9,13 +9,13 @@ using namespace std;
 typedef vector<vector<float>> matrix;
 
 int main(int argc, char** argv) {
-  int nx = 81;
-  int ny = 81;
+  int nx = 41;
+  int ny = 41;
   int nt = 500;
   int nit = 50;
   double dx = 2. / (nx - 1);
   double dy = 2. / (ny - 1);
-  double dt = .005;
+  double dt = .01;
   double rho = 1.;
   double nu = .02;
 
@@ -24,14 +24,11 @@ int main(int argc, char** argv) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-  // 各rankの担当範囲
   int begin = rank * ny / size;
   int end = (rank + 1) * ny / size;
   int local_ny = end - begin;
-  // ゴーストセル上下1行ずつ
   int local_ny_g = local_ny + 2;
 
-  // 各rankは自分の担当範囲＋上下ゴーストセルのみを持つ
   matrix u(local_ny_g, vector<float>(nx, 0.0));
   matrix v(local_ny_g, vector<float>(nx, 0.0));
   matrix p(local_ny_g, vector<float>(nx, 0.0));
@@ -62,14 +59,11 @@ int main(int argc, char** argv) {
       }
     }
 
-    // nitループ
     for (int it = 0; it < nit; it++) {
-      // pn = p
       for (int j = 0; j < local_ny_g; j++)
         for (int i = 0; i < nx; i++)
           pn[j][i] = p[j][i];
 
-      // pの更新
       for (int j = 1; j <= local_ny; j++) {
         for (int i = 1; i < nx - 1; i++) {
           p[j][i] = (dy * dy * (pn[j][i + 1] + pn[j][i - 1]) +
@@ -79,32 +73,27 @@ int main(int argc, char** argv) {
         }
       }
 
-      // pの境界条件（左右）
       for (int j = 1; j <= local_ny; j++) {
         p[j][nx - 1] = p[j][nx - 2];
         p[j][0] = p[j][1];
       }
-      // pの境界条件（上下：グローバル座標で判定）
       if (begin == 0) {
         for (int i = 0; i < nx; i++) {
-          p[1][i] = p[2][i]; // グローバルj=0
+          p[1][i] = p[2][i]; 
         }
       }
       if (end == ny) {
         for (int i = 0; i < nx; i++) {
-          p[local_ny][i] = 0.0; // グローバルj=ny-1
+          p[local_ny][i] = 0.0; 
         }
       }
 
-      // nitループ内でpの上下ゴーストセルを通信
       MPI_Status status;
-      // 上（前のrank）と通信
       if (rank > 0) {
         MPI_Sendrecv(&p[1][0], nx, MPI_FLOAT, rank - 1, 0,
                      &p[0][0], nx, MPI_FLOAT, rank - 1, 0,
                      MPI_COMM_WORLD, &status);
       }
-      // 下（次のrank）と通信
       if (rank < size - 1) {
         MPI_Sendrecv(&p[local_ny][0], nx, MPI_FLOAT, rank + 1, 0,
                      &p[local_ny + 1][0], nx, MPI_FLOAT, rank + 1, 0,
@@ -120,7 +109,6 @@ int main(int argc, char** argv) {
       }
     }
 
-    // u, vの更新
     for (int j = 1; j <= local_ny; j++) {
       for (int i = 1; i < nx - 1; i++) {
         u[j][i] = un[j][i]
@@ -139,7 +127,6 @@ int main(int argc, char** argv) {
       }
     }
 
-    // u, vの上下ゴーストセル通信
     MPI_Status status;
     if (rank > 0) {
       MPI_Sendrecv(&u[1][0], nx, MPI_FLOAT, rank - 1, 1,
@@ -158,30 +145,26 @@ int main(int argc, char** argv) {
                    MPI_COMM_WORLD, &status);
     }
 
-    // u, v, pの境界条件（左右）
     for (int j = 1; j <= local_ny; j++) {
       u[j][0] = 0.0;
       u[j][nx - 1] = 0.0;
       v[j][0] = 0.0;
       v[j][nx - 1] = 0.0;
     }
-    // u, vの境界条件（上下：グローバル座標で判定）
     if (begin == 0) {
       for (int i = 0; i < nx; i++) {
-        u[1][i] = 0.0; // グローバルj=0
+        u[1][i] = 0.0; 
         v[1][i] = 0.0;
       }
     }
     if (end == ny) {
       for (int i = 0; i < nx; i++) {
-        u[local_ny][i] = 1.0; // グローバルj=ny-1
+        u[local_ny][i] = 1.0; 
         v[local_ny][i] = 0.0;
       }
     }
 
-    // 出力（10ステップごと）
     if (n % 10 == 0) {
-      // gather用バッファ
       std::vector<float> u_local(local_ny * nx);
       std::vector<float> v_local(local_ny * nx);
       std::vector<float> p_local(local_ny * nx);
